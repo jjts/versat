@@ -1,0 +1,22 @@
+{
+  "nSTAGE": 5,
+  "DATAPATH_W": 16,
+  "nVI": 3,
+  "nVO": 1,
+  "nMEM": 0,
+  "nALU": 0,
+  "nALULITE": 1,
+  "nMUL": 0,
+  "nMULADD": 1,
+  "nYOLO": 0,
+  "nBS": 0,
+  "MEM_ADDR_W": 6,
+  "PERIOD_W": 5,
+  "YOLO_VERSAT": 0,
+  "CONF_MEM_ADDR_W": 3,
+  "CONF_MEM_USE": false,
+  "MULADD_COMB": false,
+  "include": [
+    "\"xyolodefs.vh\""
+  ]
+}

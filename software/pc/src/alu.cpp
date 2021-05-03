@@ -1,20 +1,15 @@
-#include "versat.hpp"
+#include "alu.hpp"
 #if nALU > 0
+
 CALU::CALU()
 {
 }
 
-CALU::CALU(int versat_base, int i)
+CALU::CALU(int versat_base, int i, versat_t *databus)
 {
     this->versat_base = versat_base;
     this->alu_base = i;
-}
-
-void CALU::update_shadow_reg_ALU()
-{
-    shadow_reg[versat_base].alu[alu_base].opa = conf[versat_base].alu[alu_base].opa;
-    shadow_reg[versat_base].alu[alu_base].opb = conf[versat_base].alu[alu_base].opb;
-    shadow_reg[versat_base].alu[alu_base].fns = conf[versat_base].alu[alu_base].fns;
+    this->databus = databus;
 }
 
 void CALU::start_run()
@@ -27,18 +22,23 @@ void CALU::update()
     int i = 0;
 
     //update databus
-    stage[versat_base].databus[sALU[alu_base]] = output_buff[ALU_LAT - 1];
+    databus[sALU[alu_base]] = output_buff[ALU_LAT - 1];
     //special case for stage 0
     if (versat_base == 0)
     {
         //2nd copy at the end of global databus
-        global_databus[nSTAGE * N + sALU[alu_base]] = output_buff[ALU_LAT - 1];
+        global_databus[nSTAGE * (1 << (N_W - 1)) + sALU[alu_base]] = output_buff[ALU_LAT - 1];
     }
 
     //trickle down all outputs in buffer
+    versat_t aux_output = output_buff[0];
+    versat_t aux_output2 = 0;
+    //trickle down all outputs in buffer
     for (i = 1; i < ALU_LAT; i++)
     {
-        output_buff[i] = output_buff[i - 1];
+        aux_output2 = output_buff[i];
+        output_buff[i] = aux_output;
+        aux_output = aux_output2;
     }
     //insert new output
     output_buff[0] = out;
@@ -46,8 +46,8 @@ void CALU::update()
 
 versat_t CALU::output()
 {
-    inb = stage[versat_base].databus[shadow_reg[versat_base].alu[alu_base].opa];
-    ina = stage[versat_base].databus[shadow_reg[versat_base].alu[alu_base].opb];
+    inb = databus[opa];
+    ina = databus[opb];
     bitset<DATAPATH_W> aux_sext;
     bitset<DATAPATH_W> aux_cmp;
     uint8_t aux_a = ina;
@@ -116,29 +116,27 @@ versat_t CALU::output()
     return out;
 }
 
-void CALU::writeConf()
-{
-    conf[versat_base].alu[alu_base].opa = opa;
-    conf[versat_base].alu[alu_base].opb = opb;
-    conf[versat_base].alu[alu_base].fns = fns;
-}
-
 void CALU::setOpA(int opa)
 {
-    conf[versat_base].alu[alu_base].opa = opa;
     this->opa = opa;
 }
 
 void CALU::setOpB(int opb)
 {
-    conf[versat_base].alu[alu_base].opb = opb;
     this->opb = opb;
 }
 
 void CALU::setFNS(int fns)
 {
-    conf[versat_base].alu[alu_base].fns = fns;
     this->fns = fns;
+}
+void CALU::copy(CALU that)
+{
+    this->versat_base = that.versat_base;
+    this->alu_base = that.alu_base;
+    this->opa = that.opa;
+    this->opb = that.opb;
+    this->fns = that.fns;
 }
 string CALU::info()
 {
@@ -146,6 +144,22 @@ string CALU::info()
     ver += "SetOpA=       " + to_string(opa) + "\n";
     ver += "SelOpB=       " + to_string(opb) + "\n";
     ver += "FNS =       " + to_string(fns) + "\n";
+    ver += "\n";
+    return ver;
+}
+string CALU::info_iter()
+{
+    string ver = "alu[" + to_string(alu_base) + "]\n";
+    ver += "opa=" + to_string(ina) + "\n";
+    ver += "SetOpA=       " + to_string(opa) + "\n";
+    ver += "SetOpB=       " + to_string(opb) + "\n";
+    ver += "opb=" + to_string(inb) + "\n";
+    ver += "out=" + to_string(out) + "\n";
+    ver += "OUTPUT_BUFFER (LATENCY SIM)\n";
+    for (int z = 0; z < ALU_LAT; z++)
+    {
+        ver += "Output[" + to_string(z) + "]=" + to_string(output_buff[z]) + "\n";
+    }
     ver += "\n";
     return ver;
 }

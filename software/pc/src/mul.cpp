@@ -1,21 +1,16 @@
-#include "versat.hpp"
+#include "mul.hpp"
 
 #if nMUL > 0
+
 CMul::CMul()
 {
 }
 
-CMul::CMul(int versat_base, int i)
+CMul::CMul(int versat_base, int i, versat_t *databus)
 {
     this->versat_base = versat_base;
     this->mul_base = i;
-}
-
-void CMul::update_shadow_reg_Mul()
-{
-    shadow_reg[versat_base].mul[mul_base].sela = conf[versat_base].mul[mul_base].sela;
-    shadow_reg[versat_base].mul[mul_base].selb = conf[versat_base].mul[mul_base].selb;
-    shadow_reg[versat_base].mul[mul_base].fns = conf[versat_base].mul[mul_base].fns;
+    this->databus = databus;
 }
 
 void CMul::start_run()
@@ -28,12 +23,12 @@ void CMul::update()
     int i = 0;
 
     //update databus
-    stage[versat_base].databus[sMUL[mul_base]] = output_buff[MUL_LAT - 1];
+    databus[sMUL[mul_base]] = output_buff[MUL_LAT - 1];
     //special case for stage 0
     if (versat_base == 0)
     {
         //2nd copy at the end of global databus
-        global_databus[nSTAGE * N + sMUL[mul_base]] = output_buff[MUL_LAT - 1];
+        global_databus[nSTAGE * (1 << (N_W - 1)) + sMUL[mul_base]] = output_buff[MUL_LAT - 1];
     }
 
     //trickle down all outputs in buffer
@@ -48,16 +43,16 @@ void CMul::update()
 versat_t CMul::output()
 {
     //select inputs
-    opa = stage[versat_base].databus[shadow_reg[versat_base].mul[mul_base].sela];
-    opb = stage[versat_base].databus[shadow_reg[versat_base].mul[mul_base].selb];
+    opa = databus[sela];
+    opb = databus[selb];
 
     mul_t result_mult = opa * opb;
-    if (shadow_reg[versat_base].mul[mul_base].fns == MUL_HI)
+    if (fns == MUL_HI)
     {
         result_mult = result_mult << 1;
         out = (versat_t)(result_mult >> (sizeof(versat_t) * 8));
     }
-    else if (shadow_reg[versat_base].mul[mul_base].fns == MUL_DIV2_HI)
+    else if (fns == MUL_DIV2_HI)
     {
         out = (versat_t)(result_mult >> (sizeof(versat_t) * 8));
     }
@@ -69,28 +64,26 @@ versat_t CMul::output()
     return out;
 }
 
-void CMul::writeConf()
-{
-    conf[versat_base].mul[mul_base].sela = sela;
-    conf[versat_base].mul[mul_base].selb = selb;
-    conf[versat_base].mul[mul_base].fns = fns;
-}
 void CMul::setSelA(int sela)
 {
-    conf[versat_base].mul[mul_base].sela = sela;
     this->sela = sela;
 }
 void CMul::setSelB(int selb)
 {
-    conf[versat_base].mul[mul_base].selb = selb;
     this->selb = selb;
 }
 void CMul::setFNS(int fns)
 {
-    conf[versat_base].mul[mul_base].fns = fns;
     this->fns = fns;
 }
-
+void CMul::copy(CMul that)
+{
+    this->versat_base = that.versat_base;
+    this->mul_base = that.mul_base;
+    this->sela = that.sela;
+    this->selb = that.selb;
+    this->fns = that.fns;
+}
 string CMul::info()
 {
     string ver = "mul[" + to_string(mul_base) + "]\n";
@@ -100,4 +93,17 @@ string CMul::info()
     ver += "\n";
     return ver;
 }
+string CMul::info_iter()
+{
+    string ver = "mul[" + to_string(mul_base) + "]\n";
+    ver += "SelA=       " + to_string(sela) + "\n";
+    ver += "SelB=       " + to_string(selb) + "\n";
+    ver += "inA =       " + to_string(opa) + "\n";
+    ver += "inB =       " + to_string(opb) + "\n";
+    ver += "Out=       " + to_string(out) + "\n";
+
+    ver += "\n";
+    return ver;
+}
+
 #endif

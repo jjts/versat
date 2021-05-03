@@ -21,7 +21,7 @@ include_list = []
 #Write include file
 versat = open(sys.argv[len(sys.argv)-1] + "/versat.h", "w")
 versat.write('//Versat include file\n#include <math.h>\n')
-versat.write('\n//MACRO to calculate ceil of log2\n#define clog2(x) ((int)ceil(log2(x)))\n')
+versat.write('\n//MACRO to calculate ceil of log2\n#define clog2(x) (x > 0 ? (int)ceil(log2(x)) : 0)\n')
 
 #Function to read .vh file and convert definitions to .h file
 def convert(path, filename):

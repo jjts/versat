@@ -1,5 +1,29 @@
 #include "versat.hpp"
 #include <pthread.h>
+versat_t *FPGA_mem;
+
+int base;
+CStage stage[nSTAGE];
+#if nVI > 0 || nVO > 0
+#if nVI > 0 && nVO > 0
+#define VERSAT_CONFIG_BUFFER_SIZE 2
+CWrite write_buffer[nSTAGE][nVO][VERSAT_CONFIG_BUFFER_SIZE];
+CStage buffer[nSTAGE];
+#else
+#define VERSAT_CONFIG_BUFFER_SIZE 1
+#if nVI > 0
+CStage buffer[nSTAGE];
+#else
+CWrite write_buffer[nSTAGE][nVO][VERSAT_CONFIG_BUFFER_SIZE];
+#endif
+#endif
+#endif
+CStage shadow_reg[nSTAGE];
+#if nMEM > 0
+CMem versat_mem[nSTAGE][nMEM];
+#endif
+int run_done = 0;
+
 void versat_init(int base_addr)
 {
 
@@ -10,12 +34,38 @@ void versat_init(int base_addr)
     for (i = 0; i < nSTAGE; i++)
     {
         stage[i] = CStage(base_addr + i);
-        conf[i] = stage[i];
-        shadow_reg[i] = stage[i];
+        shadow_reg[i] = CStage(base_addr + i);
+        buffer[i] = CStage(base_addr + i);
     }
     //prepare sel variables
     int p_offset = (1 << (N_W - 1));
     int s_cnt = 0;
+#if nVI > 0
+    //Vread
+    for (i = 0; i < nVI; i = i + 1)
+    {
+        sVI[i] = s_cnt + i;
+        sVI_p[i] = sVI[i] + p_offset;
+    }
+    s_cnt += nVI;
+    //create mem
+    FPGA_mem = new versat_t[1073741824 / (DATAPATH_W / 8)]; //1GB
+    for (i = 0; i < 1073741824 / (DATAPATH_W / 8); i++)
+    {
+        FPGA_mem[i] = 0;
+    }
+#endif
+#if nVO > 0
+    int j, k;
+    for (i = 0; i < nSTAGE; i++)
+    {
+        for (j = 0; j < nVO; j++)
+        {
+            for (k = 0; k < VERSAT_CONFIG_BUFFER_SIZE; k++)
+                write_buffer[i][j][k] = CWrite(i, j);
+        }
+    }
+#endif
 #if nMEM > 0
     //Memories
     for (i = 0; i < nMEM; i = i + 1)
@@ -67,16 +117,6 @@ void versat_init(int base_addr)
     s_cnt += nMULADD;
 #endif
 
-#if nMULADDLITE > 0
-    //MULADDLITES
-    for (i = 0; i < nMULADDLITE; i = i + 1)
-    {
-        sMULADDLITE[i] = s_cnt + i;
-        sMULADDLITE_p[i] = sMULADDLITE[i] + p_offset;
-    }
-    s_cnt += nMULADDLITE;
-#endif
-
 #if nBS > 0
     //BARREL SHIFTERS
     for (i = 0; i < nBS; i = i + 1)
@@ -87,8 +127,10 @@ void versat_init(int base_addr)
 #endif
 }
 
-int iter = 0;
-void run_sim()
+int versat_iter = 0;
+int versat_run = 0;
+int versat_debug = 0;
+void *run_sim(void *ie)
 {
     int i = 0;
     //put simulation here
@@ -104,6 +146,7 @@ void run_sim()
     //main run loop
     while (!run_mem)
     {
+
         //calculate new outputs
         for (i = 0; i < nSTAGE; i++)
         {
@@ -115,9 +158,12 @@ void run_sim()
         {
             shadow_reg[i].update_all_FUs();
         }
-
         //TO DO: check for run finish
         //set run_done to 0
+        if (versat_debug == 1)
+        {
+            print_versat_iter();
+        }
         for (i = 0; i < nSTAGE; i++)
         {
             run_mem_stage[i] = shadow_reg[i].done();
@@ -128,28 +174,75 @@ void run_sim()
             aux = aux && run_mem_stage[i];
         }
         run_mem = aux;
-        iter++;
+        versat_iter++;
     }
     run_done = 1;
+    return NULL;
 }
+#if nVO > 0
+void write_buffer_transfer()
+{
+    if (VERSAT_CONFIG_BUFFER_SIZE > 1)
+    {
+        for (int i = 0; i < nSTAGE; i++)
+            for (int j = 0; j < nVO; j++)
+            {
+                shadow_reg[i].vo[j].copy_ext(write_buffer[i][j][1]);
+                write_buffer[i][j][1].copy_ext(write_buffer[i][j][0]);
+                write_buffer[i][j][0].copy_ext(stage[i].vo[j]);
+            }
+    }
+    else
+    {
+        for (int i = 0; i < nSTAGE; i++)
+            for (int j = 0; j < nVO; j++)
+            {
+                shadow_reg[i].vo[j].copy_ext(write_buffer[i][j][0]);
+                write_buffer[i][j][0].copy_ext(stage[i].vo[j]);
+            }
+    }
+}
+#endif
+#if nVI > 0
+void FU_buffer_transfer()
+{
+    for (int i = 0; i < nSTAGE; i++)
+    {
+        stage[i].reset();
+        shadow_reg[i].copy(buffer[i]);
+        for (int j = 0; j < nVI; j++)
+        {
+            shadow_reg[i].vi[j].copy_ext(stage[i].vi[j]);
+        }
+        buffer[i].copy(stage[i]);
+    }
+}
+#endif
 
+pthread_t t;
 void run()
 {
     //MEMSET(base, (RUN_DONE), 1);
-    int i = 0;
     run_done = 0;
-    iter = 0;
+    versat_iter = 0;
 
-    //update shadow register with current configuration
+//update shadow register with current configuration
+#if nVO > 0
+    write_buffer_transfer();
+#endif
+#if nVI > 0
+    FU_buffer_transfer();
+#else
+    int i = 0;
+
     for (i = 0; i < nSTAGE; i++)
     {
         stage[i].reset();
-        shadow_reg[i] = stage[i];
+        shadow_reg[i].copy(stage[i]);
     }
+#endif
 
-    thread ti(run_sim);
-    ti.join();
-    printf("It took %d Versat Clock Cycles\n", iter);
+    pthread_create(&t, NULL, run_sim, NULL);
 }
 
 int done()
@@ -159,32 +252,18 @@ int done()
 
 void globalClearConf()
 {
-    memset(&conf, 0, sizeof(conf));
     for (int i = 0; i < nSTAGE; i++)
     {
-        conf[i] = CStage(i);
+        stage[i] = CStage(i);
     }
 }
 
-int base;
-CStage stage[nSTAGE];
-CStage conf[nSTAGE];
-CStage shadow_reg[nSTAGE];
-CMem versat_mem[nSTAGE][nMEM];
-int run_done = 0;
-
-/*databus vector
-stage 0 is repeated in the start and at the end
-stage order in databus
-[ 0 | nSTAGE-1 | nSTAGE-2 | ... | 2  | 1 | 0 ]
-^                                    ^
-|                                    |
-stage 0 databus                      stage 1 databus
-
-*/
-versat_t global_databus[(nSTAGE + 1) * N];
+versat_t global_databus[(nSTAGE + 1) * (1 << (N_W - 1))];
 #if nMEM > 0
 int sMEMA[nMEM], sMEMA_p[nMEM], sMEMB[nMEM], sMEMB_p[nMEM];
+#endif
+#if nVI > 0
+int sVI[nVI], sVI_p[nVI];
 #endif
 #if nALU > 0
 int sALU[nALU], sALU_p[nALU];
@@ -198,9 +277,7 @@ int sMUL[nMUL], sMUL_p[nMUL];
 #if nMULADD > 0
 int sMULADD[nMULADD], sMULADD_p[nMULADD];
 #endif
-#if nMULADDLITE > 0
-int sMULADDLITE[nMULADDLITE], sMULADDLITE_p[nMULADDLITE];
-#endif
+
 #if nBS > 0
 int sBS[nBS], sBS_p[nBS];
 #endif
